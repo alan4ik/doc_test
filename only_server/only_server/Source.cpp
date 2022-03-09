@@ -3,6 +3,9 @@
 #include <openssl/err.h>
 #include <openssl/bio.h>
 #include <iostream>
+#include <assert.h>
+#include <string>
+#include <sstream>
 #include <WinSock2.h>
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -11,6 +14,7 @@
 #pragma warning(disable : 4996)
 
 int padding = RSA_PKCS1_PADDING;
+#define MAX 200
 constexpr auto SERVERADDR = "127.0.0.1";
 
 static const std::string base64_chars =
@@ -73,9 +77,13 @@ char* generetStringPublicKey(RSA* public_key, RSA* keypair);
 char* generetStringPrivateKey(RSA* private_key, RSA* keypair);
 int public_encrypt(unsigned char* data, int data_len, unsigned char* key, unsigned char* encrypted);
 int private_decrypt(unsigned char* enc_data, int data_len, unsigned char* key, unsigned char* decrypted);
+
+size_t calcDecodeLength(const char* b64input);
+int Base64Decode(char* b64message, unsigned char** buffer, size_t* length);
+int Base64Encode(const unsigned char* buffer, size_t length, char** b64text);
+
 std::string base64_encode(char const* bytes_to_encode, int in_len);
 std::string base64_decode(std::string& encoded_string);
-
 
 SOCKET startWSA(SOCKET mysocket);
 
@@ -100,21 +108,23 @@ int main()
 	unsigned char decrypted[4098] = {};
 
 	char recvbuf[4096] = "test message";
+	char* base64_message_encode;
 
 	int encrypted_length = public_encrypt((unsigned char*)recvbuf, strlen(recvbuf), (unsigned char*)public_key_char, encrypted);
-	std::string base64_message_encode = base64_encode((char*)encrypted, strlen((char*)encrypted));
-	std::cout << "encrypted: " << encrypted << std::endl;
-	std::cout << "base64_message_encode: " << base64_message_encode << std::endl;
+	Base64Encode((unsigned char*)encrypted, strlen((char*)encrypted), &base64_message_encode);
+	//std::cout << "encrypted: " << encrypted << std::endl;
+	//std::cout << "base64_message_encode: " << base64_message_encode << std::endl;
 	std::cout << "encrypted_length: " << encrypted_length << std::endl;
 
 	int decrypted_length = private_decrypt(encrypted, encrypted_length, (unsigned char*)private_key_char, decrypted);
 	decrypted[decrypted_length] = '\0';
-	std::cout << "decrypted: " << decrypted << std::endl;
-	std::cout << "decrypted_length: " << decrypted_length << std::endl;
+	//std::cout << "decrypted: " << decrypted << std::endl;
+	//std::cout << "decrypted_length: " << decrypted_length << std::endl;
 
 	// Client
 	SOCKET mysocket = 0;
-	char buff[200];
+	char buff[MAX];
+	char input[MAX];
 	mysocket = startWSA(mysocket);
 
 	struct sockaddr_in local_addr;
@@ -147,18 +157,24 @@ int main()
 	send(mysocket, public_key_char, strlen(public_key_char), 0);
 
 	int nsize = 0;
-	while ((nsize = recv(mysocket, buff, strlen(buff), 0)) != SOCKET_ERROR)
+	std::string base64_message;
+	while ((nsize = recv(mysocket, buff, MAX, 0)) != SOCKET_ERROR)
 	{
-		//std::cout << "strlen 1: " << strlen(buff) << std::endl;
 		buff[nsize] = 0;
-		//std::cout << "strlen 2: " << strlen(buff) << std::endl;
-
 		std::cout << "S=>C: " << buff << std::endl;
 		std::cout << "S<=C: ";
 		std::cin >> buff;
 
-		int encrypted_length = public_encrypt((unsigned char*)buff, strlen(buff), (unsigned char*)public_key_server_char, encrypted);
-		std::cout << encrypted << std::endl;
+		base64_message = base64_encode((char*)buff, strlen(buff));
+
+		int n = base64_message.size();
+
+		for (int i = 0; i < n; i++) {
+			input[i] = base64_message[i];
+		}
+
+		//int encrypted_length = public_encrypt((unsigned char*)buff, strlen(buff), (unsigned char*)public_key_server_char, encrypted);
+		//std::cout << encrypted << std::endl;
 
 		if (!strcmp(&buff[0], "quit\n"))
 		{
@@ -167,8 +183,8 @@ int main()
 			WSACleanup();
 			return 0;
 		}
-
-		send(mysocket, (char*)encrypted, strlen((char*)encrypted), 0);
+		input[n] = '\0';
+		send(mysocket, input, strlen(input) + 1, 0);
 	}
 
 	std::cout << "Recv error\n";
@@ -240,6 +256,75 @@ int private_decrypt(unsigned char* enc_data, int data_len, unsigned char* key, u
 	RSA* rsa = createRSA(key, 0);
 	int  result = RSA_private_decrypt(data_len, enc_data, decrypted, rsa, padding);
 	return result;
+}
+
+size_t calcDecodeLength(const char* b64input) { //Calculates the length of a decoded string
+	size_t len = strlen(b64input),
+		padding = 0;
+
+	if (b64input[len - 1] == '=' && b64input[len - 2] == '=') //last two chars are =
+		padding = 2;
+	else if (b64input[len - 1] == '=') //last char is =
+		padding = 1;
+
+	return (len * 3) / 4 - padding;
+}
+
+int Base64Decode(char* b64message, unsigned char** buffer, size_t* length) { //Decodes a base64 encoded string
+	BIO* bio, * b64;
+
+	int decodeLen = calcDecodeLength(b64message);
+	*buffer = (unsigned char*)malloc(decodeLen + 1);
+	(*buffer)[decodeLen] = '\0';
+
+	bio = BIO_new_mem_buf(b64message, -1);
+	b64 = BIO_new(BIO_f_base64());
+	bio = BIO_push(b64, bio);
+
+	BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); //Do not use newlines to flush buffer
+	*length = BIO_read(bio, *buffer, strlen(b64message));
+	assert(*length == decodeLen); //length should equal decodeLen, else something went horribly wrong
+	BIO_free_all(bio);
+
+	return (0); //success
+}
+
+int Base64Encode(const unsigned char* buffer, size_t length, char** b64text) { //Encodes a binary safe base 64 string
+	BIO* bio, * b64;
+	BUF_MEM* bufferPtr;
+
+	b64 = BIO_new(BIO_f_base64());
+	bio = BIO_new(BIO_s_mem());
+	bio = BIO_push(b64, bio);
+
+	BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); //Ignore newlines - write everything in one line
+	BIO_write(bio, buffer, length);
+	BIO_flush(bio);
+	BIO_get_mem_ptr(bio, &bufferPtr);
+	BIO_set_close(bio, BIO_NOCLOSE);
+	BIO_free_all(bio);
+
+	*b64text = (*bufferPtr).data;
+
+	return (0); //success
+}
+
+SOCKET startWSA(SOCKET mysocket)
+{
+	char buff[1024];
+	if (WSAStartup(0x0202, (WSADATA*)&buff[0]))
+	{
+		std::cout << "Error wsastartup\n";
+		return true;
+	}
+
+	if ((mysocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		std::cout << "Error socket\n";
+		WSACleanup();
+		return true;
+	}
+	return mysocket;
 }
 
 std::string base64_encode(char const* bytes_to_encode, int in_len) {
@@ -326,20 +411,106 @@ std::string base64_decode(std::string& encoded_string) {
 	return ret;
 }
 
-SOCKET startWSA(SOCKET mysocket)
-{
-	char buff[1024];
-	if (WSAStartup(0x0202, (WSADATA*)&buff[0]))
-	{
-		std::cout << "Error wsastartup\n";
-		return true;
-	}
-
-	if ((mysocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-	{
-		std::cout << "Error socket\n";
-		WSACleanup();
-		return true;
-	}
-	return mysocket;
-}
+//#include <WinSock2.h>
+//#include <iostream>
+//#include <string>
+//
+//#pragma comment(lib, "Ws2_32.lib")
+//#pragma comment (lib, "libcrypto.lib")
+//#pragma comment (lib, "libssl.lib")
+//#pragma warning(disable : 4996)
+//
+//using namespace std;
+//#define MAX 500
+//constexpr auto SERVERADDR = "127.0.0.1";
+//#define port 5200
+//
+//SOCKET startWSA(SOCKET mysocket);
+//
+//int main()
+//{
+//	SOCKET mysocket = 0;
+//	char buff[200];
+//	mysocket = startWSA(mysocket);
+//
+//	struct sockaddr_in local_addr;
+//	local_addr.sin_port = htons(1234);
+//	local_addr.sin_family = AF_INET;
+//	HOSTENT *hst;
+//	
+//	if (inet_addr(SERVERADDR) != INADDR_NONE)
+//		local_addr.sin_addr.s_addr = inet_addr(SERVERADDR);
+//	else
+//		if (hst = gethostbyname(SERVERADDR))
+//			((unsigned long*)&local_addr.sin_addr)[0] = ((unsigned long**)hst->h_addr_list)[0][0];
+//		else
+//		{
+//			std::cout << "Invalid address\n";
+//			closesocket(mysocket);
+//			WSACleanup();
+//			return -1;
+//		}
+//	if (connect(mysocket, (sockaddr*)&local_addr, sizeof(local_addr)))
+//	{
+//		std::cout << "Connect error\n";
+//		return -1;
+//	}
+//	else
+//	{
+//		cout << "\t\tConnection Established..." << endl;
+//	}
+//
+//	while (true)
+//	{
+//		string s;
+//		char input[MAX];
+//		cout << "Client : ";
+//		getline(cin, s);
+//		int n = s.size();
+//		for (int i = 0; i < n; i++)
+//		{
+//			input[i] = s[i];
+//		}
+//		input[n] = '\0';
+//		send(mysocket, input, strlen(input) + 1, 0);
+//		char receiveMessage[MAX];
+//		int rMsgSize = recv(mysocket, receiveMessage, MAX, 0);
+//		if (rMsgSize < 0)
+//		{
+//			cout << "Packet recieve failed." << endl;
+//			return 0;
+//		}
+//		else if (rMsgSize == 0)
+//		{
+//			cout << "Server is off." << endl;
+//			return 0;
+//		}
+//
+//		if (receiveMessage[0] == 'b' && receiveMessage[1] == 'y' && receiveMessage[2] == 'e')
+//		{
+//			cout << "\nConnection ended... take care bye bye... ";
+//			break;
+//		}
+//		cout << "received server : " << receiveMessage << endl;
+//	}
+//	closesocket(mysocket);
+//	return 0;
+//}
+//
+//SOCKET startWSA(SOCKET mysocket)
+//{
+//	char buff[1024];
+//	if (WSAStartup(0x0202, (WSADATA*)&buff[0]))
+//	{
+//		std::cout << "Error wsastartup\n";
+//		return true;
+//	}
+//
+//	if ((mysocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+//	{
+//		std::cout << "Error socket\n";
+//		WSACleanup();
+//		return true;
+//	}
+//	return mysocket;
+//}

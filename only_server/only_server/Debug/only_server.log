@@ -1,4 +1,4 @@
 ﻿  Source.cpp
-C:\Users\Alan\source\repos\only_server\only_server\Source.cpp(253,57): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
-C:\Users\Alan\source\repos\only_server\only_server\Source.cpp(270,56): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
+C:\Users\Alan\source\repos\only_server\only_server\Source.cpp(384,57): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
+C:\Users\Alan\source\repos\only_server\only_server\Source.cpp(401,56): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
   only_server.vcxproj -> C:\Users\Alan\source\repos\only_server\Debug\only_server.exe

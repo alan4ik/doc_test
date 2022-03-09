@@ -1,6 +1,7 @@
 ﻿  Source.cpp
-C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(348,57): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
-C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(365,56): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
-C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(423,7): warning C4101: encrypt_mes: неиспользованная локальная переменная
-C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(436,7): warning C4101: test: неиспользованная локальная переменная
+C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(416,17): warning C4101: base64DecodeOutput: неиспользованная локальная переменная
+C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(418,9): warning C4101: test: неиспользованная локальная переменная
+C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(417,8): warning C4101: t: неиспользованная локальная переменная
+C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(523,57): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
+C:\Users\Alan\source\repos\only_client\only_client\Source.cpp(540,56): warning C4267: =: преобразование из "size_t" в "unsigned char"; возможна потеря данных
   only_client.vcxproj -> C:\Users\Alan\source\repos\only_client\Debug\only_client.exe
