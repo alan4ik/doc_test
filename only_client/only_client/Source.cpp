@@ -1,669 +1,483 @@
-#include <openssl/rsa.h>
-#include <openssl/pem.h>
-#include <openssl/bio.h>
-#include <openssl/err.h>
-#include <openssl/aes.h>
-#include <openssl/rand.h>
-#include <vector>
-#include <assert.h>
-#include <iostream>
-#include <string>
-#include <WinSock2.h>
-
-#pragma comment(lib, "Ws2_32.lib")
-#pragma comment (lib, "libcrypto.lib")
-#pragma comment (lib, "libssl.lib")
-#pragma warning(disable : 4996)
-
-#define PRINTNUSERS if(nclients) std::cout <<"User online: " << nclients << std::endl; else std::cout << "No user online\n";
-#define MAX 500
-
-int nclients = 0;
-
-int padding = RSA_PKCS1_PADDING;
-
-void handleErrors(void)
-{
-	ERR_print_errors_fp(stderr);
-	abort();
-}
-
-int encrypt(unsigned char* plaintext, int plaintext_len, unsigned char* key,
-	unsigned char* iv, unsigned char* ciphertext)
-{
-	EVP_CIPHER_CTX* ctx;
-	int len;
-	int ciphertext_len;
-	if (!(ctx = EVP_CIPHER_CTX_new()))
-		handleErrors();
-	if (1 != EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, key, iv))
-		handleErrors();
-	if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
-		handleErrors();
-	ciphertext_len = len;
-	if (1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
-		handleErrors();
-	ciphertext_len += len;
-	EVP_CIPHER_CTX_free(ctx);
-	return ciphertext_len;
-}
-
-int decrypt(unsigned char* ciphertext, int ciphertext_len, unsigned char* key,
-	unsigned char* iv, unsigned char* plaintext)
-{
-	EVP_CIPHER_CTX* ctx;
-	int len;
-	int plaintext_len;
-	if (!(ctx = EVP_CIPHER_CTX_new()))
-		handleErrors();
-	if (1 != EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, key, iv))
-		handleErrors();
-	if (1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
-		handleErrors();
-	plaintext_len = len;
-	if (1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
-		handleErrors();
-	plaintext_len += len;
-	EVP_CIPHER_CTX_free(ctx);
-	return plaintext_len;
-}
-
-static const std::string base64_chars =
-"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-"abcdefghijklmnopqrstuvwxyz"
-"0123456789+/";
-
-static inline bool is_base64(unsigned char c) {
-	return (isalnum(c) || (c == '+') || (c == '/'));
-}
-
-RSA* createRSA(unsigned char* key, int public_key);
-char* generetStringPublicKey(RSA* public_key, RSA* keypair);
-char* generetStringPrivateKey(RSA* private_key, RSA* keypair);
-int public_encrypt(unsigned char* data, int data_len, unsigned char* key, unsigned char* encrypted);
-int private_decrypt(unsigned char* enc_data, int data_len, unsigned char* key, unsigned char* decrypted);
-
-std::string base64_encode(char const* bytes_to_encode, int in_len);
-std::string base64_decode(std::string& encoded_string);
-
-size_t calcDecodeLength(const char* b64input);
-int Base64Decode(char* b64message, unsigned char** buffer, size_t* length);
-int Base64Encode(const unsigned char* buffer, size_t length, char** b64text);
-
-SOCKET startWSA(SOCKET mysocket);
-SOCKET inicilization(SOCKET mysocket, sockaddr_in local_addr);
-DWORD WINAPI SexToClient(LPVOID client_socket);
-
-struct MyStruct
-{
-	SOCKET client_socket = 0;
-	RSA* public_key, *private_key = NULL;
-	char* public_key_char, * private_key_char = NULL;
-};
-
-int main()
-{
-	//uint8_t Key[32];
-	//uint8_t IV[AES_BLOCK_SIZE]; // Сгенерируйте ключ AES
-	//RAND_bytes(Key, sizeof(Key));   // и Вектор Инициализации
-	//RAND_bytes(IV, sizeof(IV)); //
-	//
-	//// Сделайте копию с IV на Iv, так как она, похоже, 
-	//// уничтожается при использовании
-	//uint8_t IVd[AES_BLOCK_SIZE];
-	//for (int i = 0; i < AES_BLOCK_SIZE; i++) {
-	//	IVd[i] = IV[i];
-	//}
-	//
-	//std::cout << IVd << std::endl;
-	//
-	//// Настройка структуры ключей AES, 
-	//// необходимой для использования в API OpenSSL
-	//AES_KEY* AesKey = new AES_KEY();
-	//AES_set_encrypt_key(Key, 256, AesKey);
-	//
-	//// возьмите входную строку и заполните ее так, 
-	//// чтобы она помещалась в 16 байт (размер блока AES).
-	//std::string txt("this is a test");
-	//// Получить длину предварительного заполнения
-	//const int UserDataSize = (const int)txt.length();
-	//// Вычислить требуемое заполнение
-	//int RequiredPadding = (AES_BLOCK_SIZE - (txt.length() % AES_BLOCK_SIZE));
-	//// Легче заполнять в виде вектора
-	//std::vector<unsigned char> PaddedTxt(txt.begin(), txt.end());
-	//for (int i = 0; i < RequiredPadding; i++) {
-	//	PaddedTxt.push_back(0); //  Увеличьте размер строки на
-	//}                           //  сколько отступов необходимо
-	//
-	//// Получите дополненный текст в виде массива символов без знака
-	//unsigned char* UserData = &PaddedTxt[0];
-	//// и длина (OpenSSL - это C-API)
-	//const int UserDataSizePadded = (const int)PaddedTxt.size();
-	//
-	//// Выполните шифрование 
-	//// Жестко закодированный массив для OpenSSL
-	//// (C++ не может использовать динамические массивы)
-	//unsigned char EncryptedData[512] = { 0 };
-	//AES_cbc_encrypt(UserData, EncryptedData, UserDataSizePadded, 
-	//	(const AES_KEY*)AesKey, IV, AES_ENCRYPT);
-	//
-	//// Настройте структуру ключей AES для операции дешифрования
-	//
-	//// Ключ AES, который будет использоваться для расшифровки
-	//AES_KEY* AesDecryptKey = new AES_KEY();
-	//// Мы инициализируем это, чтобы мы могли использовать API шифрования OpenSSL
-	//AES_set_decrypt_key(Key, 256, AesDecryptKey);
-	//
-	//// Расшифруйте данные. Обратите внимание, что мы используем один 
-	//// и тот же вызов функции. Единственное изменение - это последний параметр
-	//
-	//// Жестко закодированный в C++ не допускает динамических массивов, а OpenSSL требует наличия массива
-	//unsigned char DecryptedData[512] = { 0 };
-	//AES_cbc_encrypt(EncryptedData, DecryptedData, UserDataSizePadded, 
-	//	(const AES_KEY*)AesDecryptKey, IVd, AES_DECRYPT);
-
-
-	SOCKET mysocket = 0;
-	//sockaddr_in local_addr;
-	mysocket = startWSA(mysocket);
-
-	struct sockaddr_in local_addr;
-	local_addr.sin_addr.s_addr = 0;
-	local_addr.sin_port = htons(1234);
-	local_addr.sin_family = AF_INET;
-
-	mysocket = inicilization(mysocket, local_addr);
-
-	// RSA algoritm
-	RSA *keypair, *private_key, *public_key = NULL;
-	keypair = RSA_new();
-	private_key = RSA_new();
-	public_key = RSA_new();
-	BIGNUM* bne = BN_new();
-	BN_set_word(bne, RSA_F4);
-	RSA_generate_key_ex(keypair, 2048, bne, NULL);
-
-	char* public_key_char = generetStringPublicKey(public_key, keypair);
-	char* private_key_char = generetStringPrivateKey(private_key, keypair);
-
-	public_key = createRSA((unsigned char*)public_key_char, 1);
-	private_key = createRSA((unsigned char*)private_key_char, 0);
-
-	unsigned char encrypted[4098] = {};
-	unsigned char decrypted[4098] = {};
-
-	char recvbuf[4096] = "test message";
-	char* base64_message_encode;
-
-	int encrypted_length = public_encrypt((unsigned char*)recvbuf, strlen(recvbuf), (unsigned char*)public_key_char, encrypted);
-	Base64Encode((unsigned char*)encrypted, strlen((char*)encrypted), &base64_message_encode);
-	//std::cout << "encrypted: " << encrypted << std::endl;
-	//std::cout << "base64_message_encode: " << base64_message_encode << std::endl;
-	std::cout << "encrypted_length: " << encrypted_length << std::endl;
-
-	int decrypted_length = private_decrypt(encrypted, encrypted_length, (unsigned char*)private_key_char, decrypted);
-	decrypted[decrypted_length] = '\0';
-	//std::cout << "decrypted: " << decrypted << std::endl;
-	//std::cout << "decrypted_length: " << decrypted_length << std::endl;
-
-	MyStruct str;
-	str.private_key = private_key;
-	str.public_key = public_key;
-	str.private_key_char = private_key_char;
-	str.public_key_char = public_key_char;
-
-	// Server
-	SOCKET client_socket = 0;
-	sockaddr_in client_addr;
-	int client_addr_size = sizeof(client_addr);
-
-	while ((client_socket = accept(mysocket, (sockaddr*)&client_addr, &client_addr_size)))
-	{
-		nclients++;
-
-		str.client_socket = client_socket;
-
-		HOSTENT* hst;
-		hst = gethostbyaddr((char*)&client_addr.sin_addr.s_addr, 4, AF_INET);
-		PRINTNUSERS;
-
-		DWORD thID;
-		CreateThread(NULL, NULL, SexToClient, &str, NULL, &thID);
-	}
-	return 0;
-
-}
-
-char* generetStringPublicKey(RSA* public_key, RSA* keypair)
-{
-	BIO* public_bio_key = BIO_new(BIO_s_mem());
-	PEM_write_bio_RSAPublicKey(public_bio_key, keypair);
-	size_t pub_len = BIO_pending(public_bio_key);
-	char* public_key_char = (char*)malloc(pub_len + 1);
-	BIO_read(public_bio_key, public_key_char, pub_len);
-	public_key_char[pub_len] = '\0';
-	std::cout << public_key_char << std::endl;
-	return public_key_char;
-}
-
-char* generetStringPrivateKey(RSA* private_key, RSA* keypair)
-{
-	BIO* private_bio_key = BIO_new(BIO_s_mem());
-	PEM_write_bio_RSAPrivateKey(private_bio_key, keypair, NULL, NULL, 0, NULL, NULL);
-	size_t pri_len = BIO_pending(private_bio_key);
-	char* private_key_char = (char*)malloc(pri_len + 1);
-	BIO_read(private_bio_key, private_key_char, pri_len);
-	private_key_char[pri_len] = '\0';
-	std::cout << private_key_char << std::endl;
-	return private_key_char;
-}
-
-RSA* createRSA(unsigned char* key, int public_key)
-{
-	RSA* rsa = NULL;
-	BIO* keybio;
-	keybio = BIO_new_mem_buf(key, -1);
-	if (keybio == NULL)
-	{
-		printf("Failed to create key BIO");
-		return 0;
-	}
-	if (public_key)
-	{
-		rsa = PEM_read_bio_RSAPublicKey(keybio, &rsa, NULL, NULL);
-		//rsa = PEM_read_bio_RSA_PUBKEY(keybio, &rsa, NULL, NULL);
-	}
-	else
-	{
-		rsa = PEM_read_bio_RSAPrivateKey(keybio, &rsa, NULL, NULL);
-	}
-	if (rsa == NULL)
-	{
-		printf("Failed to create RSA");
-	}
-
-	return rsa;
-}
-
-int public_encrypt(unsigned char* data, int data_len, unsigned char* key, unsigned char* encrypted)
-{
-	RSA* rsa = createRSA(key, 1);
-	int result = RSA_public_encrypt(data_len, data, encrypted, rsa, padding);
-	return result;
-}
-
-int private_decrypt(unsigned char* enc_data, int data_len, unsigned char* key, unsigned char* decrypted)
-{
-	RSA* rsa = createRSA(key, 0);
-	int  result = RSA_private_decrypt(data_len, enc_data, decrypted, rsa, padding);
-	return result;
-}
-
-SOCKET startWSA(SOCKET mysocket)
-{
-	char buff[1024];
-	if (WSAStartup(0x0202, (WSADATA*)&buff[0]))
-	{
-		std::cout << "Error wsastartup\n";
-		return true;
-	}
-
-	if ((mysocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-	{
-		std::cout << "Error socket\n";
-		WSACleanup();
-		return true;
-	}
-	return mysocket;
-}
-
-SOCKET inicilization(SOCKET mysocket, sockaddr_in local_addr)
-{
-	if (bind(mysocket, (sockaddr*)&local_addr, sizeof(local_addr)))
-	{
-		std::cout << "Error bind\n";
-		closesocket(mysocket);
-		WSACleanup();
-		return false;
-	}
-
-	if (listen(mysocket, 0x100))
-	{
-		std::cout << "Error listen\n";
-		closesocket(mysocket);
-		WSACleanup();
-		return false;
-	}
-	return mysocket;
-}
-
-size_t calcDecodeLength(const char* b64input) { //Calculates the length of a decoded string
-	size_t len = strlen(b64input),
-		padding = 0;
-
-	if (b64input[len - 1] == '=' && b64input[len - 2] == '=') //last two chars are =
-		padding = 2;
-	else if (b64input[len - 1] == '=') //last char is =
-		padding = 1;
-
-	return (len * 3) / 4 - padding;
-}
-
-int Base64Decode(char* b64message, unsigned char** buffer, size_t* length) { //Decodes a base64 encoded string
-	BIO* bio, * b64;
-
-	int decodeLen = calcDecodeLength(b64message);
-	*buffer = (unsigned char*)malloc(decodeLen + 1);
-	(*buffer)[decodeLen] = '\0';
-
-	bio = BIO_new_mem_buf(b64message, -1);
-	b64 = BIO_new(BIO_f_base64());
-	bio = BIO_push(b64, bio);
-
-	BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); //Do not use newlines to flush buffer
-	*length = BIO_read(bio, *buffer, strlen(b64message));
-	assert(*length == decodeLen); //length should equal decodeLen, else something went horribly wrong
-	BIO_free_all(bio);
-
-	return (0); //success
-}
-
-int Base64Encode(const unsigned char* buffer, size_t length, char** b64text) { //Encodes a binary safe base 64 string
-	BIO* bio, * b64;
-	BUF_MEM* bufferPtr;
-
-	b64 = BIO_new(BIO_f_base64());
-	bio = BIO_new(BIO_s_mem());
-	bio = BIO_push(b64, bio);
-
-	BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); //Ignore newlines - write everything in one line
-	BIO_write(bio, buffer, length);
-	BIO_flush(bio);
-	BIO_get_mem_ptr(bio, &bufferPtr);
-	BIO_set_close(bio, BIO_NOCLOSE);
-	BIO_free_all(bio);
-
-	*b64text = (*bufferPtr).data;
-
-	return (0); //success
-}
-
-DWORD __stdcall SexToClient(LPVOID str)
-{
-	MyStruct *str_p = (MyStruct*)str;
-
-	SOCKET my_sock;
-	my_sock = str_p->client_socket;
-	//my_sock = ((SOCKET*)client_socket)[0];
-	char buff[MAX];
-	char public_key_client_char[10 * 1024];
-	unsigned char encrypted[4098] = {};
-	unsigned char decrypted[4098] = {};
-	//char recvbuf[4096];
-
-	send(my_sock, str_p->public_key_char, strlen(str_p->public_key_char), 0);
-	int tmp_q = recv(my_sock, public_key_client_char, strlen(public_key_client_char), 0);
-	public_key_client_char[tmp_q] = 0;
-	std::cout << public_key_client_char << std::endl;
-
-
-#define sHELLO "Hello, men\n"
-	char input[MAX];
-	send(my_sock, sHELLO, sizeof(sHELLO), 0);
-
-	int bytes_recv = 0;
-	std::string base64_message;
-	unsigned char *base64DecodeOutput;
-	char *t;
-	size_t test;
-	while ((bytes_recv = recv(my_sock, buff, MAX, 0)) && bytes_recv != SOCKET_ERROR)
-	{
-		std::cout << "received client : " << buff << std::endl;
-		
-		std::string base64_message_s(buff);
-		
-		base64_message = base64_decode(base64_message_s);
-
-		int n = base64_message.size();
-
-		for (int i = 0; i < n; i++) {
-			input[i] = base64_message[i];
-		}
-		input[n] = '\0';
-		send(my_sock, input, strlen(input) + 1, 0);
-		//int decrypted_length = private_decrypt((unsigned char*)buff, 256, (unsigned char*)str_p->private_key_char, decrypted);
-		//base64_message = base64_encode((char*)encrypted, strlen((char*)encrypted));
-	}
-
-	//while (true)
-	//{
-	//	int rMsgSize;
-	//
-	//	if ((rMsgSize = recv(my_sock, buff, MAX, 0)) > 0) {
-	//		std::cout << "received client : " << buff << std::endl;
-	//
-	//		char input[MAX];
-	//		std::string s;
-	//		//std::getline(std::cin, s);
-	//		int n = s.size();
-	//		for (int i = 0; i < n; i++)
-	//		{
-	//			input[i] = s[i];
-	//		}
-	//
-	//		input[n] = '\0';
-	//
-	//		send(my_sock, input, strlen(input) + 1, 0);
-	//	}
-	//}
-
-	nclients--;
-	std::cout << "disconnect\n";
-	PRINTNUSERS;
-
-	closesocket(my_sock);
-	return 0;
-}
-
-std::string base64_encode(char const* bytes_to_encode, int in_len) {
-	std::string ret;
-	int i = 0;
-	int j = 0;
-	unsigned char char_array_3[3];
-	unsigned char char_array_4[4];
-
-	while (in_len--) {
-		char_array_3[i++] = *(bytes_to_encode++);
-		if (i == 3) {
-			char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-			char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-			char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-			char_array_4[3] = char_array_3[2] & 0x3f;
-
-			for (i = 0; (i < 4); i++)
-				ret += base64_chars[char_array_4[i]];
-			i = 0;
-		}
-	}
-
-	if (i)
-	{
-		for (j = i; j < 3; j++)
-			char_array_3[j] = '\0';
-
-		char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-		char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-		char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-		char_array_4[3] = char_array_3[2] & 0x3f;
-
-		for (j = 0; (j < i + 1); j++)
-			ret += base64_chars[char_array_4[j]];
-
-		while ((i++ < 3))
-			ret += '=';
-
-	}
-
-	return ret;
-
-}
-
-std::string base64_decode(std::string& encoded_string) {
-	int in_len = encoded_string.size();
-	int i = 0;
-	int j = 0;
-	int in_ = 0;
-	unsigned char char_array_4[4], char_array_3[3];
-	std::string ret;
-
-	while (in_len-- && (encoded_string[in_] != '=') && is_base64(encoded_string[in_])) {
-		char_array_4[i++] = encoded_string[in_]; in_++;
-		if (i == 4) {
-			for (i = 0; i < 4; i++)
-				char_array_4[i] = base64_chars.find(char_array_4[i]);
-
-			char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-			char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-			char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-			for (i = 0; (i < 3); i++)
-				ret += char_array_3[i];
-			i = 0;
-		}
-	}
-
-	if (i) {
-		for (j = i; j < 4; j++)
-			char_array_4[j] = 0;
-
-		for (j = 0; j < 4; j++)
-			char_array_4[j] = base64_chars.find(char_array_4[j]);
-
-		char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-		char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-		char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-		for (j = 0; (j < i - 1); j++) ret += char_array_3[j];
-	}
-
-	return ret;
-}
-
-
-//#include <WinSock2.h>
+//#include <openssl/rsa.h>
+//#include <openssl/pem.h>
+//#include <openssl/bio.h>
+//#include <openssl/err.h>
+//#include <openssl/ssl.h>
+//#include <openssl/aes.h>
+//#include <openssl/rand.h>
+//#include <openssl/x509.h>
+//#include <stdio.h>
+//#include <vector>
+//#include <assert.h>
 //#include <iostream>
 //#include <string>
+//#include <WinSock2.h>
 //
 //#pragma comment(lib, "Ws2_32.lib")
 //#pragma comment (lib, "libcrypto.lib")
 //#pragma comment (lib, "libssl.lib")
 //#pragma warning(disable : 4996)
 //
-//using namespace std;
+//char* generetStringPublicKey(RSA* public_key, RSA* keypair)
+//{
+//    BIO* public_bio_key = BIO_new(BIO_s_mem());
+//    PEM_write_bio_RSAPublicKey(public_bio_key, keypair);
+//    size_t pub_len = BIO_pending(public_bio_key);
+//    char* public_key_char = (char*)malloc(pub_len + 1);
+//    BIO_read(public_bio_key, public_key_char, pub_len);
+//    public_key_char[pub_len] = '\0';
+//    return public_key_char;
+//}
 //
-//#define MAX 500
-//#define port 5200
+//EVP_PKEY* open_public_key(unsigned char* pub_key_file)
+//{
+//    EVP_PKEY* key = NULL;
+//    RSA* rsa = NULL;
 //
-//SOCKET inicilization(SOCKET mysocket, sockaddr_in local_addr);
-//SOCKET startWSA(SOCKET mysocket);
+//    OpenSSL_add_all_algorithms();
+//    //BIO* bio_pub = BIO_new(BIO_s_file());
+//    BIO* bio_pub = BIO_new(BIO_s_mem());;
+//    BIO_read(bio_pub, pub_key_file, strlen((const char*)pub_key_file));
+//    if (NULL == bio_pub)
+//    {
+//        printf("open_public_key bio file new error!\n");
+//        return NULL;
+//    }
+//
+//    rsa = PEM_read_bio_RSAPublicKey(bio_pub, NULL, NULL, NULL);
+//    if (rsa == NULL)
+//    {
+//        printf("open_public_key failed to PEM_read_bio_RSAPublicKey!\n");
+//        BIO_free(bio_pub);
+//        RSA_free(rsa);
+//
+//        return NULL;
+//    }
+//
+//    printf("open_public_key success to PEM_read_bio_RSAPublicKey!\n");
+//    key = EVP_PKEY_new();
+//    if (NULL == key)
+//    {
+//        printf("open_public_key EVP_PKEY_new failed\n");
+//        RSA_free(rsa);
+//
+//        return NULL;
+//    }
+//
+//    EVP_PKEY_assign_RSA(key, rsa);
+//    return key;
+//}
+//
+//EVP_PKEY* open_private_key(const char* priv_key_file, const unsigned char* passwd)
+//{
+//    EVP_PKEY* key = NULL;
+//    RSA* rsa = RSA_new();
+//    OpenSSL_add_all_algorithms();
+//    BIO* bio_priv = NULL;
+//    bio_priv = BIO_new_file(priv_key_file, "rb");
+//    if (NULL == bio_priv)
+//    {
+//        printf("open_private_key bio file new error!\n");
+//
+//        return NULL;
+//    }
+//
+//    rsa = PEM_read_bio_RSAPrivateKey(bio_priv, &rsa, NULL, (void*)passwd);
+//    if (rsa == NULL)
+//    {
+//        printf("open_private_key failed to PEM_read_bio_RSAPrivateKey!\n");
+//        BIO_free(bio_priv);
+//        RSA_free(rsa);
+//
+//        return NULL;
+//    }
+//
+//    printf("open_private_key success to PEM_read_bio_RSAPrivateKey!\n");
+//    key = EVP_PKEY_new();
+//    if (NULL == key)
+//    {
+//        printf("open_private_key EVP_PKEY_new failed\n");
+//        RSA_free(rsa);
+//
+//        return NULL;
+//    }
+//
+//    EVP_PKEY_assign_RSA(key, rsa);
+//    return key;
+//}
+//
+//int create_socket(int port)
+//{
+//    SOCKET s = 0;
+//    struct sockaddr_in addr;
+//
+//    WSADATA wsaData;
+//    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+//    {
+//        printf("WSAStartup()fail:%d\n", GetLastError());
+//        return -1;
+//    }
+//
+//    addr.sin_family = AF_INET;
+//    addr.sin_port = htons(port);
+//    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+//
+//    s = socket(AF_INET, SOCK_STREAM, 0);
+//    if (s < 0) {
+//        perror("Unable to create socket");
+//        exit(EXIT_FAILURE);
+//    }
+//
+//    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+//        perror("Unable to bind");
+//        exit(EXIT_FAILURE);
+//    }
+//
+//    if (listen(s, 1) < 0) {
+//        perror("Unable to listen");
+//        exit(EXIT_FAILURE);
+//    }
+//
+//    return s;
+//}
+//
+//SSL_CTX* create_context()
+//{
+//    const SSL_METHOD* method;
+//    SSL_CTX* ctx;
+//
+//    method = TLS_server_method();
+//
+//    ctx = SSL_CTX_new(method);
+//    if (!ctx) {
+//        perror("Unable to create SSL context");
+//        ERR_print_errors_fp(stderr);
+//        exit(EXIT_FAILURE);
+//    }
+//
+//    return ctx;
+//}
+//
+//void configure_context(SSL_CTX* ctx)
+//{
+//    /* Set the key and cert */
+//    if (SSL_CTX_use_certificate_file(ctx, "cert_test.pem", SSL_FILETYPE_PEM) <= 0) {
+//        ERR_print_errors_fp(stderr);
+//        exit(EXIT_FAILURE);
+//    }
+//
+//    if (SSL_CTX_use_PrivateKey_file(ctx, "key_test.pem", SSL_FILETYPE_PEM) <= 0) {
+//        ERR_print_errors_fp(stderr);
+//        exit(EXIT_FAILURE);
+//    }
+//}
+//
+//std::string pem(X509* x509)
+//{
+//    BIO* bio_out = BIO_new(BIO_s_mem());
+//    PEM_write_bio_X509(bio_out, x509);
+//    BUF_MEM* bio_buf;
+//    BIO_get_mem_ptr(bio_out, &bio_buf);
+//    std::string pem = std::string(bio_buf->data, bio_buf->length);
+//    BIO_free(bio_out);
+//    return pem;
+//}
+//
+//void createCertificate()
+//{
+//    EVP_PKEY* pkey;
+//    pkey = EVP_PKEY_new();
+//
+//    RSA* rsa;
+//    rsa = RSA_generate_key(
+//        2048,   /* number of bits for the key - 2048 is a sensible value */
+//        RSA_F4, /* exponent - RSA_F4 is defined as 0x10001L */
+//        NULL,   /* callback - can be NULL if we aren't displaying progress */
+//        NULL    /* callback argument - not needed in this case */
+//    );
+//
+//    EVP_PKEY_assign_RSA(pkey, rsa);
+//
+//    X509* x509;
+//    x509 = X509_new();
+//
+//    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+//
+//    X509_gmtime_adj(X509_get_notBefore(x509), 0);
+//    X509_gmtime_adj(X509_get_notAfter(x509), 31536000L);
+//
+//    X509_set_pubkey(x509, pkey);
+//
+//    auto name = X509_get_subject_name(x509);
+//
+//    int ret = X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
+//        (unsigned char*)"CA", -1, -1, 0);
+//    std::cout << ret << std::endl;
+//    ret = X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+//        (unsigned char*)"MyCompany Inc.", -1, -1, 0);
+//    std::cout << ret << std::endl;
+//    ret = X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+//        (unsigned char*)"localhost", -1, -1, 0);
+//    std::cout << ret << std::endl;
+//
+//    ret = X509_set_issuer_name(x509, name);
+//    std::cout << ret << std::endl;
+//    
+//    ret = X509_sign(x509, pkey, EVP_sha1());
+//    std::cout << ret << std::endl;
+//
+//    ret = X509_verify(x509, pkey);
+//    std::cout << ret << std::endl;
+//
+//   /* BIO* f = BIO_new(BIO_s_mem());
+//    PEM_write_bio_X509(f, x509);
+//    size_t pri_len = BIO_pending(f);
+//    char* private_key_char = (char*)malloc(pri_len + 1);
+//    BIO_read(f, private_key_char, pri_len);
+//    private_key_char[pri_len] = '\0';*/
+//    
+//    //BIO* bio_file = NULL;
+//
+//    //bio_file = BIO_new_file("AAAAAAA.pem", "w");
+//    //if (bio_file == NULL) {
+//    //    ret = -1;
+//    //}
+//    //ret = PEM_write_bio_X509(bio_file, x509);
+//    //if (ret != 1) {
+//    //    ret = -1;
+//    //}
+//    //BIO_free(bio_file);
+//
+//
+//    BIO* w = NULL;
+//    w = BIO_new_file("key_test.pem", "wb");
+//    PEM_write_bio_PrivateKey(
+//        w,                  /* write the key to the file we've opened */
+//        pkey,               /* our key from earlier */
+//        NULL, /* default cipher for encrypting the key on disk */
+//        NULL,       /* passphrase required for decrypting the key on disk */
+//        0,                 /* length of the passphrase string */
+//        NULL,               /* callback for requesting a password */
+//        NULL                /* data to pass to the callback */
+//    );
+//    BIO_free(w);
+//
+//    BIO* f = NULL;
+//    f = BIO_new_file("cert_test.pem", "wb");
+//    PEM_write_bio_X509(
+//        f,   /* write the certificate to the file we've opened */
+//        x509 /* our certificate */
+//    );
+//    BIO_free(f);
+//}
+//
+//int main(int argc, char** argv)
+//{
+//    /*RSA* rsa_pub_key = NULL;
+//    RSA* keypair = RSA_new();
+//    keypair = RSA_generate_key(2048, RSA_F4, NULL, NULL);
+//    char* pub_key = generetStringPublicKey(rsa_pub_key, keypair);
+//    EVP_PKEY* evp_pub_key = open_public_key((unsigned char*)pub_key);*/
+//    //createCertificate();
+//
+//    int sock;
+//    SSL_CTX* ctx;
+//
+//    ctx = create_context();
+//
+//    configure_context(ctx);
+//
+//    sock = create_socket(4433);
+//
+//    /* Handle connections */
+//    while (1) {
+//        struct sockaddr_in addr;
+//        int len = sizeof(addr);
+//        SSL* ssl;
+//        const char reply[] = "test\n";
+//
+//        int client = accept(sock, (struct sockaddr*)&addr, &len);
+//        if (client < 0) {
+//            perror("Unable to accept");
+//            exit(EXIT_FAILURE);
+//        }
+//
+//        ssl = SSL_new(ctx);
+//        SSL_set_fd(ssl, client);
+//
+//        if (SSL_accept(ssl) <= 0) {
+//            ERR_print_errors_fp(stderr);
+//        }
+//        else {
+//            char buf[1024];
+//            int ret = SSL_write(ssl, reply, strlen(reply));
+//
+//            ret = SSL_read(ssl, buf, strlen(buf));
+//            buf[ret] = '\0';
+//            std::cout << buf << std::endl;
+//
+//        }
+//
+//        SSL_shutdown(ssl);
+//        SSL_free(ssl);
+//        closesocket(client);
+//    }
+//
+//    closesocket(sock);
+//    SSL_CTX_free(ctx);
+//}
+
+#include "mycrypto.h"
+#include "Kuznyechik.h"
+
+int main() {
+    ByteBlock key = hex_to_bytes("8899aabbccddeeff0011223344556677fedcba98765432100123456789abcdef");
+    ByteBlock iv = hex_to_bytes("abcdef12345600dacdef94756eeabefa");
+    ByteBlock msg = hex_to_bytes("1122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa9988");
+    ByteBlock enc_meg;
+    ByteBlock dec_msg;
+
+    CFB_Mode<Kuznyechik> encryptor(Kuznyechik(key), iv);
+    encryptor.encrypt(msg, enc_meg);
+    encryptor.decrypt(enc_meg, dec_msg);
+    auto tmp = hex_representation(dec_msg);
+}
+
+//#define CERTF "server-cert.pem" /* сертификат сервера (должен быть подписан CA) */
+//#define KEYF "server-key.pem" /* Закрытый ключ сервера (рекомендуется зашифрованное хранилище) */
+//#define CACERT "ca-cert.pem" /* сертификат CA */
+//#define PORT 4433 /* Порт для привязки */
+//
+//#define CHK_NULL(x)if ((x)==NULL) exit (1)
+//#define CHK_ERR(err,s) if ((err)==-1) { perror(s); exit(1); }
+//#define CHK_SSL(err) if ((err)==-1) { ERR_print_errors_fp(stderr); exit(2); }
 //
 //int main()
 //{
-//	SOCKET mysocket = 0;
-//	//sockaddr_in local_addr;
-//	mysocket = startWSA(mysocket);
+//	int err;
+//	int listen_sd;
+//	int sd;
+//	struct sockaddr_in sa_serv;
+//	struct sockaddr_in sa_cli;
 //
-//	struct sockaddr_in local_addr;
-//	local_addr.sin_addr.s_addr = 0;
-//	local_addr.sin_port = htons(1234);
-//	local_addr.sin_family = AF_INET;
+//	int client_len;
+//	SSL_CTX* ctx;
+//	SSL* ssl;
+//	X509* client_cert;
+//	char* str;
+//	char buf[4096];
+//	const SSL_METHOD* meth;
 //
-//	mysocket = inicilization(mysocket, local_addr);
+//	WSADATA wsaData;
 //
-//	SOCKET client_socket = 0;
-//	sockaddr_in client_addr;
-//	int client_addr_size = sizeof(client_addr);
-//
-//	char buff[MAX];
-//	if ((client_socket = accept(mysocket, (struct sockaddr*)&local_addr, &client_addr_size)) < 0)
+//	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
 //	{
-//		cout << "Server didn't accept the request." << endl;
-//		return 0;
+//		printf("WSAStartup()fail:%dn", GetLastError());
+//		return -1;
+//	}
+//
+//	SSL_load_error_strings(); /*Подготовка к печати отладочной информации */
+//
+//	OpenSSL_add_ssl_algorithms(); /*инициализация */
+//	meth = SSLv3_server_method(); /*Какой протокол(SSLv2 / SSLv3 / TLSv1) используется, укажите здесь*/
+//
+//	ctx = SSL_CTX_new(meth);
+//	CHK_NULL(ctx);
+//	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL); /*Проверять или нет */
+//
+//
+//	SSL_CTX_load_verify_locations(ctx, CACERT, NULL); /*Если подтверждено, поместите сертификат CA*/
+//
+//
+//	if (SSL_CTX_use_certificate_file(ctx, CERTF, SSL_FILETYPE_PEM) <= 0)
+//	{
+//		ERR_print_errors_fp(stderr);
+//		exit(3);
+//	}
+//
+//	printf("here works in...\n");
+//
+//	if (SSL_CTX_use_PrivateKey_file(ctx, KEYF, SSL_FILETYPE_PEM) <= 0)
+//	{
+//		ERR_print_errors_fp(stderr);
+//		exit(4);
+//	}
+//
+//	if (!SSL_CTX_check_private_key(ctx))
+//	{
+//		printf("Private key does not match the certificate public key\n");
+//		exit(5);
+//	}
+//
+//
+//	SSL_CTX_set_cipher_list(ctx, "RC4-MD5");
+//
+//	/*Запуск обычного процесса сокета TCP */
+//	printf("Begin TCP socket...\n");
+//	listen_sd = socket(AF_INET, SOCK_STREAM, 0);
+//	CHK_ERR(listen_sd, "socket");
+//	memset(&sa_serv, '\0', sizeof(sa_serv));
+//	sa_serv.sin_family = AF_INET;
+//	sa_serv.sin_addr.s_addr = INADDR_ANY;
+//	sa_serv.sin_port = htons(PORT);
+//	err = bind(listen_sd, (struct sockaddr*)&sa_serv, sizeof(sa_serv));
+//	CHK_ERR(err, "bind");
+//	/*Принять ссылку TCP */
+//	err = listen(listen_sd, 5);
+//	CHK_ERR(err, "listen");
+//	client_len = sizeof(sa_cli);
+//
+//	sd = accept(listen_sd, (struct sockaddr*)&sa_cli, &client_len);
+//
+//	CHK_ERR(sd, "accept");
+//	closesocket(listen_sd);
+//	printf("Connection from %lx, port %x\n", sa_cli.sin_addr.s_addr, sa_cli.sin_port);
+//	/*TCP - соединение установлено, и SSL - процесс сервера выполняется. */
+//	printf("Begin server side SSL\n");
+//	ssl = SSL_new(ctx);
+//	CHK_NULL(ssl);
+//	SSL_set_fd(ssl, sd);
+//	err = SSL_accept(ssl);
+//	std::cout << SSL_get_error(ssl, err) << std::endl;
+//	printf("SSL_accept finished\n");
+//	CHK_SSL(err);
+//
+//	/*Распечатать всю информацию об алгоритме шифрования(необязательно) */
+//	printf("SSL connection using %s\n", SSL_get_cipher(ssl));
+//	/*Получить сертификат сервера и распечатать некоторую информацию(необязательно) */
+//		client_cert = SSL_get_peer_certificate(ssl);
+//	if (client_cert != NULL)
+//	{
+//		printf("Client certificate:\n");
+//		str = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
+//		CHK_NULL(str);
+//		printf("\t subject: %s\n", str);
+//		//free (str);
+//		str = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
+//		CHK_NULL(str);
+//		printf("\t issuer: %s\n", str);
+//
+//		//free (str);
+//		X509_free(client_cert); /*Если он вам больше не нужен, вам нужно выпустить сертификат*/
 //	}
 //	else
-//	{
-//		cout << "Server accepted the request. \n";
-//	}
+//		printf("Client does not have certificate.\n");
 //
-//	while (true)
-//	{
-//		// infinite loop for chatting
-//		int rMsgSize;
+//	/*Начнется обмен данными, используйте SSL_write, SSL_read вместо записи, чтение*/
+//	do {
+//		err = SSL_read(ssl, buf, sizeof(buf) - 1);
+//		CHK_SSL(err);  buf[err] = '\0';
+//		printf("client:'%s'\n", buf);
+//		printf("server:");  
+//		std::cin >> buf;
+//		err = SSL_write(ssl, buf, strlen(buf));
+//		CHK_SSL(err);
+//	} while (strcmp(buf, "bye"));
 //
-//		if ((rMsgSize = recv(client_socket, buff, MAX, 0)) > 0) {
-//			cout << "received client : " << buff << endl;
-//
-//			if (buff[0] == 'b' && buff[1] == 'y' && buff[2] == 'e') {
-//				cout << "Server : Bye bro" << endl;
-//				cout << "\nConnection ended... take care bye bye...\n";
-//				send(client_socket, buff, strlen(buff) + 1, 0);
-//				break;
-//			}
-//
-//			cout << "Server : ";
-//			char input[MAX];
-//			string s;
-//			getline(cin, s);
-//			int n = s.size();
-//			for (int i = 0; i < n; i++)
-//			{
-//				input[i] = s[i];
-//			}
-//
-//			input[n] = '\0';
-//
-//			send(client_socket, input, strlen(input) + 1, 0);
-//		}
-//	}
-//	closesocket(mysocket);
+//	/*Завершающие работы */
+//	shutdown(sd, 2);
+//	SSL_free(ssl);
+//	SSL_CTX_free(ctx);
+//	system("pause");
 //	return 0;
-//
-//}
-//
-//SOCKET inicilization(SOCKET mysocket, sockaddr_in local_addr)
-//{
-//	if (bind(mysocket, (sockaddr*)&local_addr, sizeof(local_addr)))
-//	{
-//		std::cout << "Error bind\n";
-//		closesocket(mysocket);
-//		WSACleanup();
-//		return false;
-//	}
-//
-//	if (listen(mysocket, 0x100))
-//	{
-//		std::cout << "Error listen\n";
-//		closesocket(mysocket);
-//		WSACleanup();
-//		return false;
-//	}
-//	return mysocket;
-//}
-//
-//SOCKET startWSA(SOCKET mysocket)
-//{
-//	char buff[1024];
-//	if (WSAStartup(0x0202, (WSADATA*)&buff[0]))
-//	{
-//		std::cout << "Error wsastartup\n";
-//		return true;
-//	}
-//
-//	if ((mysocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-//	{
-//		std::cout << "Error socket\n";
-//		WSACleanup();
-//		return true;
-//	}
-//	return mysocket;
 //}

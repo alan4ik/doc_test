@@ -141,7 +141,16 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="argvparser.cpp" />
+    <ClCompile Include="Kuznyechik.cpp" />
+    <ClCompile Include="mycrypto.cpp" />
     <ClCompile Include="Source.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="argvparser.h" />
+    <ClInclude Include="Kuznyechik.h" />
+    <ClInclude Include="modes.h" />
+    <ClInclude Include="mycrypto.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
