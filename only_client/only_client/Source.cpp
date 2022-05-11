@@ -330,17 +330,226 @@
 #include "mycrypto.h"
 #include "Kuznyechik.h"
 
-int main() {
-    ByteBlock key = hex_to_bytes("8899aabbccddeeff0011223344556677fedcba98765432100123456789abcdef");
-    ByteBlock iv = hex_to_bytes("abcdef12345600dacdef94756eeabefa");
-    ByteBlock msg = hex_to_bytes("1122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa99881122334455667700ffeeddccbbaa9988");
-    ByteBlock enc_meg;
-    ByteBlock dec_msg;
+#include <openssl/rand.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
 
-    CFB_Mode<Kuznyechik> encryptor(Kuznyechik(key), iv);
-    encryptor.encrypt(msg, enc_meg);
-    encryptor.decrypt(enc_meg, dec_msg);
-    auto tmp = hex_representation(dec_msg);
+#include <chrono>
+#include <string>
+#include <fstream>
+#include <WinSock2.h>
+
+using namespace std::chrono;
+
+#pragma comment(lib, "Ws2_32.lib")
+#pragma comment (lib, "libcrypto.lib")
+#pragma comment (lib, "libssl.lib")
+#pragma warning(disable : 4996)
+
+SOCKET create_socket()
+{
+    SOCKET s = 0;
+
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        printf("WSAStartup()fail:%d\n", GetLastError());
+        return -1;
+    }
+
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        perror("Unable to create socket");
+        exit(EXIT_FAILURE);
+    }
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(4433);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    int ret = connect(s, (struct sockaddr*)&addr, sizeof(addr));
+    if (ret < 0) {
+        perror("Unable to connect");
+        exit(EXIT_FAILURE);
+    }
+
+    return s;
+}
+
+string createAES() {
+    unsigned char key[32];
+    RAND_bytes(key, sizeof(key));
+    string key_str((char*)key);
+    return key_str;
+}
+
+string createIV() {
+    unsigned char iv[16];
+    RAND_bytes(iv, sizeof(iv));
+    string iv_str((char*)iv);
+    return iv_str;
+}
+
+void handleErrors(void)
+{
+    ERR_print_errors_fp(stderr);
+    abort();
+}
+
+int encrypt(unsigned char* plaintext, int plaintext_len, unsigned char* key,
+    unsigned char* iv, unsigned char* ciphertext)
+{
+    EVP_CIPHER_CTX* ctx;
+
+    int len;
+
+    int ciphertext_len;
+
+    /* Create and initialise the context */
+    if (!(ctx = EVP_CIPHER_CTX_new()))
+        handleErrors();
+
+    /*
+     * Initialise the encryption operation. IMPORTANT - ensure you use a key
+     * and IV size appropriate for your cipher
+     * In this example we are using 256 bit AES (i.e. a 256 bit key). The
+     * IV size for *most* modes is the same as the block size. For AES this
+     * is 128 bits
+     */
+    if (1 != EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, key, iv))
+        handleErrors();
+
+    /*
+     * Provide the message to be encrypted, and obtain the encrypted output.
+     * EVP_EncryptUpdate can be called multiple times if necessary
+     */
+    if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
+        handleErrors();
+    ciphertext_len = len;
+
+    /*
+     * Finalise the encryption. Further ciphertext bytes may be written at
+     * this stage.
+     */
+    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
+        handleErrors();
+    ciphertext_len += len;
+
+    /* Clean up */
+    EVP_CIPHER_CTX_free(ctx);
+
+    return ciphertext_len;
+}
+
+int decrypt(unsigned char* ciphertext, int ciphertext_len, unsigned char* key,
+    unsigned char* iv, unsigned char* plaintext)
+{
+    EVP_CIPHER_CTX* ctx;
+
+    int len;
+
+    int plaintext_len;
+
+    /* Create and initialise the context */
+    if (!(ctx = EVP_CIPHER_CTX_new()))
+        handleErrors();
+
+    /*
+     * Initialise the decryption operation. IMPORTANT - ensure you use a key
+     * and IV size appropriate for your cipher
+     * In this example we are using 256 bit AES (i.e. a 256 bit key). The
+     * IV size for *most* modes is the same as the block size. For AES this
+     * is 128 bits
+     */
+    if (1 != EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, key, iv))
+        handleErrors();
+
+    /*
+     * Provide the message to be decrypted, and obtain the plaintext output.
+     * EVP_DecryptUpdate can be called multiple times if necessary.
+     */
+    if (1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
+        handleErrors();
+    plaintext_len = len;
+
+    /*
+     * Finalise the decryption. Further plaintext bytes may be written at
+     * this stage.
+     */
+    if (1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
+        handleErrors();
+    plaintext_len += len;
+
+    /* Clean up */
+    EVP_CIPHER_CTX_free(ctx);
+
+    return plaintext_len;
+}
+
+int main() {
+    //ByteBlock key = hex_to_bytes(key_hex);
+    //ByteBlock iv = hex_to_bytes(iv_hex);
+    //ByteBlock msg = hex_to_bytes(msg_hex);
+
+
+    for (int i = 0; i < 300; i++) {
+        string keys = "jiadsjioasdjioqkpoqwekopeeasdkpo";
+        string ivss = "mkjioadsdsddkjop";
+
+        ByteBlock key((BYTE*)keys.c_str(), 32);
+        ByteBlock iv((BYTE*)ivss.c_str(), 16);
+        ByteBlock msg((BYTE*)"CLIENT CLIENT CLIENT CLIENT CLIENT", 35);
+
+        ByteBlock enc_meg;
+        ByteBlock dec_msg;
+
+        CFB_Mode<Kuznyechik> encryptor(Kuznyechik(key), iv);
+        encryptor.encrypt(msg, enc_meg);
+
+        SOCKET mysocket = 0;
+        mysocket = create_socket();
+
+        send(mysocket, (const char*)enc_meg.byte_ptr(), enc_meg.size(), 0);
+
+        char buf[10241];
+        int ret = recv(mysocket, buf, sizeof(buf), 0);
+        buf[ret - 1] = '\0';
+
+        enc_meg.reset((BYTE*)buf, ret);
+        encryptor.decrypt(enc_meg, dec_msg);
+        dec_msg[dec_msg.size() - 1] = '\0';
+
+        std::cout << "SOK: " << mysocket << std::endl;
+        std::cout << "SER: " << dec_msg.byte_ptr() << std::endl;
+        //closesocket(mysocket);
+    }
+
+    system("pause");
+
+    /*for (int i = 0; i < 300; i++) {
+        auto startt = steady_clock::now();
+
+        string keyss = createAES();
+        string ivss = createIV();
+
+        ByteBlock key((BYTE*)keyss.c_str(), 32);
+        ByteBlock iv((BYTE*)ivss.c_str(), 16);
+        ByteBlock msg((BYTE*)"{data zasdq123pol}", 19);
+
+        ByteBlock enc_meg;
+        ByteBlock dec_msg;
+
+        CFB_Mode<Kuznyechik> encryptor(Kuznyechik(key), iv);
+        encryptor.encrypt(msg, enc_meg);
+        encryptor.decrypt(enc_meg, dec_msg);
+        dec_msg[dec_msg.size()] = '\0';
+
+        auto finishh = steady_clock::now();
+        auto qs = duration_cast<microseconds>(finishh - startt).count();
+    }*/
+
+    //auto t = hex_representation(dec_msg);
 }
 
 //#define CERTF "server-cert.pem" /* сертификат сервера (должен быть подписан CA) */

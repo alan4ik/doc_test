@@ -18,21 +18,21 @@
     <ClCompile Include="Source.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
-    <ClCompile Include="Kuznyechik.cpp">
+    <ClCompile Include="mycrypto.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
-    <ClCompile Include="mycrypto.cpp">
+    <ClCompile Include="Kuznyechik.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mycrypto.h">
+    <ClInclude Include="Kuznyechik.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
     <ClInclude Include="modes.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
-    <ClInclude Include="Kuznyechik.h">
+    <ClInclude Include="mycrypto.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
   </ItemGroup>
